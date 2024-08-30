@@ -1,4 +1,4 @@
-VERSION = "0.0.0-dev"  # Version updated by release workflow
+VERSION = "v0.0.13-MFA"  # Version updated by release workflow
 
 DOMAIN = "resmed_myair"
 DEFAULT_UPDATE_RATE_MIN = 30
