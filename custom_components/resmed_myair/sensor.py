@@ -1,10 +1,9 @@
 """Sensor entities for resmed_myair."""
 
 from collections.abc import MutableMapping
-import logging
-
-from typing import Any, Final
 from datetime import date
+import logging
+from typing import Any, Final
 
 from aiohttp import DummyCookieJar
 
@@ -23,7 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from .client.myair_client import MyAirConfig
+from .client.myair_client import MyAirConfig, SleepRecord
 from .client.rest_client import RESTClient
 from .const import CONF_DEVICE_TOKEN, CONF_PASSWORD, CONF_REGION, CONF_USER_NAME, DOMAIN
 from .coordinator import MyAirDataUpdateCoordinator
@@ -87,10 +86,13 @@ class MyAirSleepRecordSensor(MyAirBaseSensor):
         """Return the native value (aka. state)."""
         # The API always returns the previous month of data, so the client stores this
         # We assume this is ordered temporally and grab the last one: the latest one
-        value: str | float | int | date | None = None
+        value = None
         if self.coordinator.sleep_records:
             value = self.coordinator.sleep_records[-1].get(self.sensor_key, 0)
-            if isinstance(value, str) and self.entity_description.device_class == SensorDeviceClass.DATE:
+            if (
+                isinstance(value, str)
+                and self.entity_description.device_class == SensorDeviceClass.DATE
+            ):
                 value = dt_util.parse_date(value)
         return value
 
@@ -159,15 +161,14 @@ class MyAirMostRecentSleepDate(MyAirBaseSensor):
         if self.coordinator.sleep_records:
             # Filter out all 0-usage days
             sleep_days_with_data: list[SleepRecord] = list(
-                filter(
-                    lambda record: record["totalUsage"] > 0, self.coordinator.sleep_records
-                )
+                filter(lambda record: record["totalUsage"] > 0, self.coordinator.sleep_records)
             )
 
             if sleep_days_with_data:
                 date_string: str = sleep_days_with_data[-1]["startDate"]
                 value = dt_util.parse_date(date_string)
         return value
+
 
 # Our sensor class will prepend the serial number to the key
 # These sensors pass data directly from my air

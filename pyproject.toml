@@ -10,6 +10,9 @@ fail_under = 80
 [tool.mypy]
 python_version = "3.13"
 follow_imports = "silent"
+exclude = [
+    'tests/'  # TOML's single-quoted strings do not require escaping backslashes
+]
 ignore_missing_imports = true
 platform = "linux"
 show_error_codes = true
