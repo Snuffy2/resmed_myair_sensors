@@ -21,15 +21,16 @@
 ### Installation via HACS
 
 Unless you have a good reason not to, you probably want to install this component via HACS (Home Assistant Community Store)
-1. Ensure that [HACS](https://hacs.xyz/) is installed.
+
+1. Ensure that [HACS](https://hacs.xyz/) is installed
 1. Navigate to HACS -> Integrations
-1. Open the three-dot menu and select 'Custom Repositories'
-1. Put 'https://github.com/prestomation/resmed_myair_sensors/' into the 'Repository' textbox.
-1. Select 'Integration' as the category
-1. Press 'Add'.
+1. Open the three-dot menu and select `Custom Repositories`
+1. Put `https://github.com/prestomation/resmed_myair_sensors` into the `Repository` textbox.
+1. Select `Integration` as the category
+1. Press `Add`
 1. Find the ResMed integration in the HACS integration list and install it
-1. Restart Home Assistant.
-1. Add a configuration for the integration in the standard integration UI in Home Assistant.
+1. Restart Home Assistant
+1. Add a configuration for the integration in the standard integration UI in Home Assistant
 
 <details>
 <summary><h3>Manual Installation</h3></summary>
@@ -37,6 +38,7 @@ Unless you have a good reason not to, you probably want to install this componen
 You probably do not want to do this! Use the HACS method above unless you have a very good reason why you are installing manually
 
 If you do need to install manually, you will know how this is done. You can install from source or use the latest release.
+
 </details>
 
 ## Features
@@ -69,7 +71,7 @@ Each config entry for this integration will create a service called `resmed_myai
 
 This integration was reversed engineered from the myAir website. There are no guarantees that this will continue to work, as this is up to the whims of ResMed. Please DO NOT rely on this for any health-related matters.
 
-This integration currently only connects to accounts from North America, Europe, and Australia. If you are in Asia and have access to the ResMed myAir website in your country (https://myair.resmed.com), please open an issue and offer yourself as a test subject.
+This integration currently only connects to accounts from North America, Europe, and Australia. If you are in Asia and have access to the ResMed myAir website in your country (<https://myair.resmed.com>), please open an issue and offer yourself as a test subject.
 
 ## Contributions are welcome!
 
@@ -78,7 +80,7 @@ If you want to contribute to this please read the [Contribution guidelines](CONT
 If you want to support the development of this component, please don't donate to me but instead donate to the Home Assistant development team.
 
 [commits-shield]: https://img.shields.io/github/commit-activity/y/prestomation/resmed_myair_sensors.svg?style=for-the-badge
-[commits]: https://github.com/prestomation/resmed_myair_sensors/commits/master
+[commits]: https://github.com/prestomation/resmed_myair_sensors/commits/main
 [hacs]: https://github.com/custom-components/hacs
 [hacsbadge]: https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge
 [discord]: https://discord.gg/Qa5fW2R
