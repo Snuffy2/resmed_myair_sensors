@@ -245,8 +245,7 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reauth(self, entry_data: MutableMapping[str, Any]) -> ConfigFlowResult:
         """Handle configuration by re-auth."""
         _LOGGER.info("Starting Reauthorization")
-        if entry := self.hass.config_entries.async_get_entry(self.context["entry_id"]):
-            self._entry = entry
+        self._entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         _LOGGER.debug("[async_step_reauth] entry: %s", redact_dict(self._entry))
         _LOGGER.debug("[async_step_reauth] entry_data: %s", redact_dict(entry_data))
         self._data.update(entry_data)
