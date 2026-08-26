@@ -15,6 +15,7 @@ from urllib.parse import DefragResult, parse_qs, urldefrag
 from aiohttp import ClientResponse, ClientSession
 from aiohttp.http_exceptions import HttpProcessingError
 from multidict import CIMultiDict
+from yarl import URL
 
 from custom_components.resmed_myair.const import AUTH_NEEDS_MFA, AUTHN_SUCCESS
 from custom_components.resmed_myair.redaction import redact_dict
@@ -39,6 +40,30 @@ _AUTH_LOG_SECRET_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _log_response_summary(step: str, response: ClientResponse) -> None:
+    """Log non-sensitive HTTP response metadata.
+
+    Args:
+        step (str): Request step used to identify the response.
+        response (ClientResponse): Response whose public transport metadata is logged.
+    """
+    reason = response.reason if isinstance(response.reason, str) else "unknown"
+    safe_reason = "".join(character for character in reason[:80] if character.isprintable())
+    response_url = response.url
+    safe_url = (
+        response_url.with_user(None).with_password(None).with_query(None).with_fragment(None)
+        if isinstance(response_url, URL)
+        else "unknown"
+    )
+    _LOGGER.debug(
+        "[%s] response status=%s reason=%s url=%s",
+        step,
+        response.status,
+        safe_reason,
+        safe_url,
+    )
+
+
 def _safe_auth_log_payload(data: Any) -> Any:
     """Remove auth-flow-only secret keys before debug logging.
 
@@ -49,11 +74,13 @@ def _safe_auth_log_payload(data: Any) -> Any:
         Any: A copy with known secret-bearing fields omitted recursively.
     """
     if isinstance(data, Mapping):
-        return {
-            key: _safe_auth_log_payload(value)
-            for key, value in data.items()
-            if key not in _AUTH_LOG_SECRET_KEYS
-        }
+        return redact_dict(
+            {
+                key: _safe_auth_log_payload(value)
+                for key, value in data.items()
+                if key not in _AUTH_LOG_SECRET_KEYS
+            }
+        )
     if isinstance(data, list):
         return [_safe_auth_log_payload(value) for value in data]
     return data
@@ -372,7 +399,7 @@ class MyAirAuthSession:
             headers=headers,
             allow_redirects=False,
         ) as userinfo_res:
-            _LOGGER.debug("[is_email_verified] userinfo_res: %s", userinfo_res)
+            _log_response_summary("is_email_verified", userinfo_res)
             userinfo_dict: MutableMapping[str, Any] = await userinfo_res.json()
             _LOGGER.debug("[is_email_verified] introspect_dict: %s", redact_dict(userinfo_dict))
             await self.resmed_response_error_check("userinfo_query", userinfo_res, userinfo_dict)
@@ -427,7 +454,7 @@ class MyAirAuthSession:
             raise_for_status=False,
             allow_redirects=False,
         ) as initial_dt_res:
-            _LOGGER.debug("[get_initial_dt] initial_dt_res: %s", initial_dt_res)
+            _log_response_summary("get_initial_dt", initial_dt_res)
 
         await self._extract_and_update_cookies(initial_dt_res.headers.getall("set-cookie", []))
 
@@ -456,7 +483,7 @@ class MyAirAuthSession:
         async with self._session.post(
             introspect_url, headers=headers, data=introspect_query, cookies=self._cookies
         ) as introspect_res:
-            _LOGGER.debug("[is_access_token_active] introspect_res: %s", introspect_res)
+            _log_response_summary("is_access_token_active", introspect_res)
             introspect_dict: MutableMapping[str, Any] = await introspect_res.json()
             _LOGGER.debug(
                 "[is_access_token_active] introspect_dict: %s", redact_dict(introspect_dict)
@@ -519,10 +546,24 @@ class MyAirAuthSession:
                     error_message = str(resp_dict["errors"][0])
             except (TypeError, KeyError) as e:
                 error_message = f"Unable to parse error message. {type(e).__name__}: {e}"
+            if isinstance(error_message, str) and error_message.startswith(
+                "Unable to parse error message."
+            ):
+                safe_error_message = error_message.split(":", maxsplit=1)[0]
+            elif isinstance(resp_dict["errors"][0], Mapping) and isinstance(
+                resp_dict["errors"][0].get("errorInfo"), Mapping
+            ):
+                safe_error_message = "Remote error type omitted"
+            elif (
+                isinstance(resp_dict["errors"][0], Mapping) and "message" in resp_dict["errors"][0]
+            ):
+                safe_error_message = "Remote error message omitted"
+            else:
+                safe_error_message = "Unstructured remote error omitted"
             raise HttpProcessingError(
                 code=response.status,
-                message=f"{step} step: {error_message}. {resp_dict}",
-                headers=CIMultiDict(response.headers),
+                message=f"{step} step: {safe_error_message}",
+                headers=CIMultiDict(),
             )
 
     async def _authn_check(self) -> str:
@@ -549,7 +590,7 @@ class MyAirAuthSession:
             json=json_query,
             cookies=self._cookies,
         ) as authn_res:
-            _LOGGER.debug("[authn_check] authn_res: %s", authn_res)
+            _log_response_summary("authn_check", authn_res)
             authn_dict: MutableMapping[str, Any] = await authn_res.json()
             _LOGGER.debug("[authn_check] authn_dict: %s", _safe_auth_log_payload(authn_dict))
             await self.resmed_response_error_check("authn", authn_res, authn_dict)
@@ -588,7 +629,7 @@ class MyAirAuthSession:
             json=json_query,
             cookies=self._cookies,
         ) as trigger_mfa_res:
-            _LOGGER.debug("[trigger_mfa] trigger_mfa_res: %s", trigger_mfa_res)
+            _log_response_summary("trigger_mfa", trigger_mfa_res)
             trigger_mfa_dict: MutableMapping[str, Any] = await trigger_mfa_res.json()
             _LOGGER.debug(
                 "[trigger_mfa] trigger_mfa_dict: %s",
@@ -623,7 +664,7 @@ class MyAirAuthSession:
             json=json_query,
             cookies=self._cookies,
         ) as verify_mfa_res:
-            _LOGGER.debug("[verify_mfa] verify_mfa_res: %s", verify_mfa_res)
+            _log_response_summary("verify_mfa", verify_mfa_res)
             verify_mfa_dict: MutableMapping[str, Any] = await verify_mfa_res.json()
             _LOGGER.debug(
                 "[verify_mfa] verify_mfa_dict: %s",
@@ -687,7 +728,7 @@ class MyAirAuthSession:
             params=params_query,
             cookies=self._cookies,
         ) as code_res:
-            _LOGGER.debug("[get_access_token] code_res: %s", code_res)
+            _log_response_summary("get_access_token_code", code_res)
             location = code_res.headers.get("location")
             if location is None:
                 raise ParsingError("Unable to get location from code_res")
@@ -734,7 +775,7 @@ class MyAirAuthSession:
             allow_redirects=False,
             cookies=self._cookies,
         ) as token_res:
-            _LOGGER.debug("[get_access_token] token_res: %s", token_res)
+            _log_response_summary("get_access_token_token", token_res)
             token_dict: MutableMapping[str, Any] = await token_res.json()
             _LOGGER.debug("[get_access_token] token_dict: %s", redact_dict(token_dict))
             await self.resmed_response_error_check("get_access_token", token_res, token_dict)

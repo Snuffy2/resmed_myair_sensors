@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from aiohttp import DummyCookieJar
-from aiohttp.client_exceptions import ClientError, ClientResponseError
+from aiohttp.client_exceptions import ClientError
 from aiohttp.http_exceptions import HttpProcessingError
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, UnknownEntry
 from homeassistant.core import HomeAssistant
@@ -39,13 +39,12 @@ _LOGGER = logging.getLogger(__name__)
 CONNECTION_ERRORS: tuple[type[Exception], ...] = (
     AuthenticationError,
     HttpProcessingError,
-    ClientResponseError,
+    ClientError,
+    TimeoutError,
     ParsingError,
 )
 EMAIL_VERIFICATION_ERRORS: tuple[type[Exception], ...] = (
     *CONNECTION_ERRORS,
-    ClientError,
-    TimeoutError,
     ValueError,
 )
 
@@ -265,16 +264,11 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
             raise ParsingError("Unable to get Serial Number from Device Data")
         if not self._entry.unique_id:
             _LOGGER.info(
-                "Reauth will backfill missing legacy entry unique ID with device serial number %s",
-                device.serial_number,
+                "Reauth will backfill the missing legacy entry unique ID",
             )
             return None
         if device.serial_number != self._entry.unique_id:
-            _LOGGER.error(
-                "Reauth device serial number %s does not match existing entry unique ID %s",
-                device.serial_number,
-                self._entry.unique_id,
-            )
+            _LOGGER.error("Reauth credentials belong to a different device")
             return self.async_abort(reason="wrong_account")
         return None
 
@@ -299,11 +293,7 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
             raise ParsingError("Unable to get Serial Number from Device Data")
         await self.async_set_unique_id(device.serial_number)
         if not entry.unique_id:
-            _LOGGER.info(
-                "Reconfigure will backfill missing legacy entry unique ID with device serial "
-                "number %s",
-                device.serial_number,
-            )
+            _LOGGER.info("Reconfigure will backfill the missing legacy entry unique ID")
             if self.hass.config_entries.async_entry_for_domain_unique_id(
                 self.handler,
                 device.serial_number,
@@ -311,11 +301,7 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
                 return self.async_abort(reason="already_configured"), None
             return None, device.serial_number
         if entry.unique_id != device.serial_number:
-            _LOGGER.error(
-                "Reconfigure device serial number %s does not match existing entry unique ID %s",
-                device.serial_number,
-                entry.unique_id,
-            )
+            _LOGGER.error("Reconfigure credentials belong to a different device")
             return self.async_abort(reason="wrong_account"), None
         return None, None
 
@@ -438,11 +424,11 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 status, device = await self._async_login_and_get_device()
                 if device and status == AUTHN_SUCCESS:
-                    _LOGGER.debug("[async_step_user] device: %s", redact_dict(device.raw))
+                    _LOGGER.debug("[async_step_user] received device metadata")
                     if not device.serial_number:
                         raise ParsingError("Unable to get Serial Number from Device Data")
                     serial_number: str = device.serial_number
-                    _LOGGER.info("Found device with serial number %s", serial_number)
+                    _LOGGER.info("Found an assigned myAir device")
 
                     await self.async_set_unique_id(serial_number)
                     self._abort_if_unique_id_configured()
@@ -494,7 +480,7 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
                     if not device.serial_number:
                         raise ParsingError("Unable to get Serial Number from Device Data")
                     serial_number: str = device.serial_number
-                    _LOGGER.info("Found device with serial number %s", serial_number)
+                    _LOGGER.info("Found an assigned myAir device")
 
                     await self.async_set_unique_id(serial_number)
                     self._abort_if_unique_id_configured()
@@ -535,7 +521,6 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
         except UnknownEntry:
             _LOGGER.error("No entry found for reauthorization")
             raise
-        _LOGGER.debug("[async_step_reauth] entry: %s", redact_dict(self._entry))
         _LOGGER.debug("[async_step_reauth] entry_data: %s", redact_dict(entry_data))
         self._data.update(entry_data)
         return await self.async_step_reauth_confirm()
@@ -562,11 +547,10 @@ class MyAirConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._data.get(CONF_DEVICE_TOKEN, None),
                 )
                 if device and status == AUTHN_SUCCESS:
-                    _LOGGER.debug("[async_step_reauth_confirm] device: %s", redact_dict(device.raw))
+                    _LOGGER.debug("[async_step_reauth_confirm] received device metadata")
                     if mismatch_abort := self._abort_if_reauth_device_mismatch(device):
                         return mismatch_abort
-                    serial_number: str = device.serial_number
-                    _LOGGER.info("Found device with serial number %s", serial_number)
+                    _LOGGER.info("Found an assigned myAir device")
                     unique_id = device.serial_number if not self._entry.unique_id else None
                     return self._finish_entry_update(
                         self._entry,

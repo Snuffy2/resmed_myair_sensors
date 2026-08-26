@@ -9,6 +9,7 @@ from aiohttp import ClientResponse
 from aiohttp.http_exceptions import HttpProcessingError
 from multidict import CIMultiDict
 import pytest
+from yarl import URL
 
 from custom_components.resmed_myair.client import rest_client as rest_client_module
 from custom_components.resmed_myair.client.auth import MyAirAuthSession, _mfa_challenge_metadata
@@ -355,6 +356,29 @@ async def test_resmed_response_error_check_variants(
     response.headers = CIMultiDict()
     with pytest.raises(expected_exception):
         await MyAirAuthSession.resmed_response_error_check("authn", response, resp_dict)
+
+
+@pytest.mark.asyncio
+async def test_http_processing_error_omits_remote_payload_and_headers() -> None:
+    """Fallback HTTP errors retain status while excluding remote secrets."""
+    payload_sentinel = "UNIQUE_REMOTE_PAYLOAD_SECRET"
+    header_sentinel = "UNIQUE_REMOTE_HEADER_SECRET"
+    response = MagicMock(spec=ClientResponse)
+    response.status = 429
+    response.headers = CIMultiDict({"Set-Cookie": header_sentinel})
+
+    with pytest.raises(HttpProcessingError) as exc:
+        await MyAirAuthSession.resmed_response_error_check(
+            "rate_limit",
+            response,
+            {"errors": [{"message": payload_sentinel}]},
+        )
+
+    assert exc.value.code == 429
+    assert "rate_limit step" in str(exc.value)
+    assert payload_sentinel not in str(exc.value)
+    assert header_sentinel not in str(exc.value)
+    assert not exc.value.headers
 
 
 @pytest.mark.asyncio
@@ -1286,6 +1310,46 @@ async def test_gql_query_variants(
 
 
 @pytest.mark.asyncio
+async def test_gql_query_logs_only_transport_and_shape_metadata(
+    config_na: MyAirConfig,
+    session: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """GraphQL debug logs omit response repr, URL query, and returned health data.
+
+    Args:
+        config_na (MyAirConfig): North American client configuration.
+        session (MagicMock): HTTP session double used by the GraphQL client.
+        caplog (pytest.LogCaptureFixture): Captured debug log output.
+    """
+    response_sentinel = "UNIQUE_RAW_RESPONSE_REPR"
+    url_sentinel = "UNIQUE_URL_QUERY_SECRET"
+    health_sentinel = "UNIQUE_PATIENT_HEALTH_SECRET"
+    client = RESTClient(config_na, session)
+    client._auth.access_token = "access"
+    client._graphql.country_code = "US"
+    response = MagicMock(spec=ClientResponse)
+    response.__str__.return_value = response_sentinel
+    response.status = 200
+    response.reason = "OK"
+    response.url = URL(f"https://example.test/graphql?token={url_sentinel}")
+    response.json = AsyncMock(
+        return_value={"data": {"getPatientWrapper": {"health": health_sentinel}}}
+    )
+    session.post.return_value = make_mock_aiohttp_context_manager(response)
+
+    with caplog.at_level(logging.DEBUG):
+        await client._gql_query("SafeOperation", "query SafeOperation { data }")
+
+    assert "operation=SafeOperation" in caplog.text
+    assert "status=200" in caplog.text
+    assert "url=https://example.test/graphql" in caplog.text
+    assert response_sentinel not in caplog.text
+    assert url_sentinel not in caplog.text
+    assert health_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("id_token", "jwt_behavior", "match"),
     [
@@ -1494,6 +1558,66 @@ async def test_data_fetch_success_variants(
         assert result.raw == expected
         assert result.serial_number == expected.get("serialNumber")
         assert result.native_value("serialNumber") == expected.get("serialNumber")
+
+
+@pytest.mark.asyncio
+async def test_data_fetch_logs_omit_sleep_and_device_values(
+    config_na: MyAirConfig,
+    session: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Sleep and device summaries never interpolate patient payload values.
+
+    Args:
+        config_na (MyAirConfig): North American client configuration.
+        session (MagicMock): HTTP session double used by the REST client.
+        monkeypatch (pytest.MonkeyPatch): Patch manager for GraphQL responses.
+        caplog (pytest.LogCaptureFixture): Captured debug log output.
+    """
+    patient_sentinel = "UNIQUE_SLEEP_PATIENT_ID"
+    serial_sentinel = "UNIQUE_DEVICE_SERIAL"
+    mask_sentinel = "UNIQUE_MASK_CODE"
+    client = RESTClient(config_na, session)
+    gql_query = AsyncMock(
+        side_effect=[
+            {
+                "data": {
+                    "getPatientWrapper": {
+                        "sleepRecords": {
+                            "items": [
+                                {
+                                    "startDate": "2026-08-25",
+                                    "totalUsage": 480,
+                                    "sleepRecordPatientId": patient_sentinel,
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+            {
+                "data": {
+                    "getPatientWrapper": {
+                        "fgDevices": [{"serialNumber": serial_sentinel}],
+                        "masks": [{"maskCode": mask_sentinel}],
+                    }
+                }
+            },
+        ]
+    )
+    monkeypatch.setattr(client, "_gql_query", gql_query)
+
+    with caplog.at_level(logging.DEBUG):
+        await client.get_sleep_records()
+        await client.get_user_device_data()
+
+    assert "record_count=1" in caplog.text
+    assert "device_count=1" in caplog.text
+    assert "mask_present=True" in caplog.text
+    assert patient_sentinel not in caplog.text
+    assert serial_sentinel not in caplog.text
+    assert mask_sentinel not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -1934,8 +2058,8 @@ async def test_status_helpers_variants(
 @pytest.mark.parametrize(
     ("resp_dict", "expected_substring"),
     [
-        ({"errors": [{"message": "custom error message"}]}, "custom error message"),
-        ({"errors": [{"foo": "bar"}]}, "'foo': 'bar'"),
+        ({"errors": [{"message": "custom error message"}]}, "Remote error message omitted"),
+        ({"errors": [{"foo": "bar"}]}, "Unstructured remote error omitted"),
         ({"errors": [{"errorInfo": None}]}, "Unable to parse error message"),
     ],
 )

@@ -27,6 +27,10 @@ from custom_components.resmed_myair.redaction import REDACTED, redact_dict
             {"nested": MappingProxyType({"access_token": "token-value"})},
             {"nested": {"access_token": REDACTED}},
         ),
+        (
+            {"device_token": "remembered-device", "verification_code": "123456"},
+            {"device_token": REDACTED, "verification_code": REDACTED},
+        ),
     ],
 )
 def test_redact_dict_redacts_sensitive_values(data: object, expected: object) -> None:

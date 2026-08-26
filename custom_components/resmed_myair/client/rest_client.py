@@ -209,7 +209,6 @@ class RESTClient(MyAirClient):
         records_dict: MutableMapping[str, Any] = await self._gql_query(
             "GetPatientSleepRecords", query, initial
         )
-        _LOGGER.debug("[get_sleep_records] records_dict: %s", redact_dict(records_dict))
         data = _required_mapping(records_dict.get("data"), "Error getting Patient Sleep Records")
         patient_wrapper = _required_mapping(
             data.get("getPatientWrapper"), "Error getting Patient Sleep Records"
@@ -221,7 +220,7 @@ class RESTClient(MyAirClient):
             sleep_records.get("items"),
             "Error getting Patient Sleep Records. Returned records is not a list",
         )
-        _LOGGER.debug("[get_sleep_records] records: %s", redact_dict(records))
+        _LOGGER.debug("[get_sleep_records] received record_count=%d", len(records))
         typed_records: list[MyAirSleepRecord] = []
         for record in records:
             if not isinstance(record, Mapping):
@@ -269,7 +268,6 @@ class RESTClient(MyAirClient):
         records_dict: MutableMapping[str, Any] = await self._gql_query(
             "getPatientWrapper", query, initial
         )
-        _LOGGER.debug("[get_user_device_data] records_dict: %s", redact_dict(records_dict))
         data = _required_mapping(records_dict.get("data"), "Error getting User Device Data")
         patient_wrapper = _required_mapping(
             data.get("getPatientWrapper"), "Error getting User Device Data"
@@ -284,5 +282,9 @@ class RESTClient(MyAirClient):
         )
         if mask_code := _optional_mask_code(patient_wrapper):
             device["maskCode"] = mask_code
-        _LOGGER.debug("[get_user_device_data] device: %s", redact_dict(device))
+        _LOGGER.debug(
+            "[get_user_device_data] received device_count=%d mask_present=%s",
+            len(devices),
+            "maskCode" in device,
+        )
         return MyAirDevice.from_api(device)

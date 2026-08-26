@@ -55,6 +55,31 @@ def test_coordinator_data_uses_empty_payload_for_untyped_data(raw_data: object) 
     assert data == MyAirCoordinatorData()
 
 
+@pytest.mark.parametrize("last_update_success", [True, False])
+def test_sensor_availability_honors_coordinator_update_status(
+    last_update_success: bool,
+    coordinator_factory: CoordinatorFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sensors are unavailable when the coordinator's latest update failed.
+
+    Args:
+        last_update_success (bool): Coordinator update status for the case.
+        coordinator_factory (CoordinatorFactory): Factory creating the coordinator.
+        monkeypatch (pytest.MonkeyPatch): Pytest patch manager for state writes.
+    """
+    coordinator = coordinator_factory(
+        data=coordinator_data(device={"serialNumber": "SN123", "foo": "value"})
+    )
+    coordinator.last_update_success = last_update_success  # type: ignore[attr-defined]
+    sensor = MyAirDeviceSensor("Test", SensorEntityDescription(key="foo"), coordinator)
+    monkeypatch.setattr(sensor, "async_write_ha_state", MagicMock(return_value=None))
+
+    sensor._handle_coordinator_update()
+
+    assert sensor.available is last_update_success
+
+
 @pytest.mark.parametrize(
     ("data", "expected_native", "expected_available"),
     [
@@ -405,3 +430,65 @@ def test_myair_device_sensor_handle_coordinator_update_keyerror(
     # Verify
     assert not sensor.available
     assert "Unable to parse Device" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_sensor_setup_maps_colliding_services_independently_of_load_order(
+    hass: MagicMock,
+    config_entry: MockConfigEntry,
+    coordinator_factory: CoordinatorFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Colliding force-poll names map to the same entries in either load order.
+
+    Args:
+        hass (MagicMock): Home Assistant instance receiving the service.
+        config_entry (MockConfigEntry): Fixture supplying the first entry's base data.
+        coordinator_factory (CoordinatorFactory): Factory creating the coordinator.
+        monkeypatch (pytest.MonkeyPatch): Pytest patch manager for setup dependencies.
+    """
+    base_name = "force_poll_test_example_com"
+    entry_a = MockConfigEntry(
+        domain="resmed_myair",
+        data={**config_entry.data, "Username": "test+example.com"},
+        entry_id="entry-a",
+    )
+    entry_b = MockConfigEntry(
+        domain="resmed_myair",
+        data={**config_entry.data, "Username": "test.example.com"},
+        entry_id="entry-b",
+    )
+    for entry in (entry_a, entry_b):
+        coordinator = coordinator_factory(mock=True)
+        coordinator.data = coordinator_data(device={"serialNumber": entry.entry_id})
+        entry.runtime_data = coordinator
+        monkeypatch.setattr(entry, "async_on_unload", MagicMock())
+
+    hass.services = MagicMock()
+    hass.config_entries.async_entries = MagicMock(return_value=[entry_b, entry_a])
+    registered_services: list[str] = []
+    hass.services.async_register = MagicMock(
+        side_effect=lambda _domain, service, _handler: registered_services.append(service)
+    )
+    hass.services.async_remove = MagicMock()
+
+    for entry in (entry_a, entry_b):
+        await async_setup_entry(hass, entry, MagicMock())
+    first_mapping = dict(zip(("entry-a", "entry-b"), registered_services, strict=True))
+
+    registered_services.clear()
+    for entry in (entry_b, entry_a):
+        await async_setup_entry(hass, entry, MagicMock())
+    reverse_mapping = dict(zip(("entry-b", "entry-a"), registered_services, strict=True))
+
+    expected_mapping = {
+        "entry-a": base_name,
+        "entry-b": f"{base_name}_entry_b",
+    }
+    assert first_mapping == expected_mapping
+    assert reverse_mapping == expected_mapping
+
+    on_unload = entry_b.async_on_unload
+    cleanup = on_unload.call_args_list[-1].args[0]
+    cleanup()
+    hass.services.async_remove.assert_called_once_with("resmed_myair", expected_mapping["entry-b"])

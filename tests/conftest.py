@@ -32,6 +32,7 @@ class CoordinatorLike(Protocol):
     """Protocol for coordinator doubles that expose typed data and listeners."""
 
     data: MyAirCoordinatorData
+    last_update_success: bool
 
     def async_add_listener(self, *args: object, **kwargs: object) -> Callable[[], None]:
         """Accept Home Assistant listener registration on coordinator doubles.
@@ -498,6 +499,7 @@ def coordinator_factory() -> CoordinatorFactory:
             m.async_config_entry_first_refresh = AsyncMock()
             # Provide a data attribute so callers can set/read coordinator.data
             m.data = MyAirCoordinatorData()
+            m.last_update_success = True
             return m
 
         if isinstance(data, MyAirCoordinatorData):
@@ -515,6 +517,7 @@ def coordinator_factory() -> CoordinatorFactory:
                     d (MyAirCoordinatorData): Typed coordinator payload used by sensor tests.
                 """
                 self.data = d
+                self.last_update_success = True
 
             def async_add_listener(self, *args: object, **kwargs: object) -> Callable[[], None]:
                 """Accept listener registration and return a no-op unsubscribe callback.

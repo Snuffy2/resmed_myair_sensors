@@ -120,7 +120,8 @@ class MyAirDevice:
             raw=raw,
             serial_number=serial_number,
             manufacturer=_to_optional_str(raw.get("fgDeviceManufacturerName")),
-            model=_to_optional_str(raw.get("deviceType")),
+            model=_to_optional_str(raw.get("deviceSeries"))
+            or _to_optional_str(raw.get("deviceType")),
             name=_to_optional_str(raw.get("localizedName")),
         )
 

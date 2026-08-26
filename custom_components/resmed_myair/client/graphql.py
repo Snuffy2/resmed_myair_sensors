@@ -7,9 +7,7 @@ from aiohttp import ClientSession
 import jwt
 from jwt import InvalidTokenError
 
-from custom_components.resmed_myair.redaction import redact_dict
-
-from .auth import MyAirAuthSession
+from .auth import MyAirAuthSession, _log_response_summary
 from .myair_client import ParsingError
 from .regions import RegionConfig
 
@@ -66,18 +64,22 @@ class MyAirGraphQLClient:
             "variables": {},
             "query": query,
         }
-        _LOGGER.debug("[gql_query] graphql_url: %s", self._region_config.graphql_url)
-        _LOGGER.debug("[gql_query] headers: %s", redact_dict(headers))
-        _LOGGER.debug("[gql_query] json_query: %s", redact_dict(json_query))
+        _LOGGER.debug("[gql_query] sending operation=%s initial=%s", operation_name, initial)
 
         async with self._session.post(
             self._region_config.graphql_url,
             headers=headers,
             json=json_query,
         ) as records_res:
-            _LOGGER.debug("[gql_query] records_res: %s", records_res)
+            _log_response_summary("gql_query", records_res)
             records_dict: dict[str, Any] = await records_res.json()
-            _LOGGER.debug("[gql_query] records_dict: %s", redact_dict(records_dict))
+            errors = records_dict.get("errors")
+            _LOGGER.debug(
+                "[gql_query] received operation=%s has_data=%s error_count=%d",
+                operation_name,
+                "data" in records_dict,
+                len(errors) if isinstance(errors, list) else 0,
+            )
             await MyAirAuthSession.resmed_response_error_check(
                 "gql_query", records_res, records_dict, initial
             )

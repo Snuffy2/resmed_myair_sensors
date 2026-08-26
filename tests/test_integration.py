@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.components.sensor import SensorEntityDescription
+from homeassistant.exceptions import ConfigEntryNotReady
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -104,6 +105,7 @@ async def test_async_setup_entry_multiple_calls(
     monkeypatch.setattr(resmed_module, "MyAirDataUpdateCoordinator", mock_coordinator)
     instance = mock_coordinator.return_value
     instance.async_config_entry_first_refresh = AsyncMock()
+    instance.data = coordinator_data(device={"serialNumber": "SN123"})
 
     monkeypatch.setattr(resmed_module, "async_migrate_mask_leak_statistics_metadata", MagicMock())
     monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", AsyncMock())
@@ -140,6 +142,7 @@ async def test_async_setup_entry_migrates_mask_leak_statistics_metadata(
     mock_coordinator = MagicMock()
     monkeypatch.setattr(resmed_module, "MyAirDataUpdateCoordinator", mock_coordinator)
     mock_coordinator.return_value.async_config_entry_first_refresh = AsyncMock()
+    mock_coordinator.return_value.data = coordinator_data(device={"serialNumber": "SN123"})
     migrate_statistics = MagicMock()
     monkeypatch.setattr(
         resmed_module,
@@ -154,6 +157,40 @@ async def test_async_setup_entry_migrates_mask_leak_statistics_metadata(
     assert result is True
     migrate_statistics.assert_called_once_with(hass)
     hass.config_entries.async_forward_entry_setups.assert_awaited_once_with(config_entry, PLATFORMS)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("device", [None, {"serialNumber": ""}])
+async def test_async_setup_entry_requires_device_serial_number(
+    hass: MagicMock,
+    config_entry: MockConfigEntry,
+    session: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    device: dict[str, object] | None,
+) -> None:
+    """Setup refuses to forward platforms when the initial device is unusable.
+
+    Args:
+        hass (MagicMock): Home Assistant instance receiving setup.
+        config_entry (MockConfigEntry): Integration entry being initialized.
+        session (MagicMock): HTTP session returned by the patched session factory.
+        monkeypatch (pytest.MonkeyPatch): Pytest patch manager for setup dependencies.
+        device (dict[str, object] | None): Device payload selected for the case.
+    """
+    monkeypatch.setattr(
+        resmed_module, "async_create_clientsession", lambda *args, **kwargs: session
+    )
+    mock_coordinator = MagicMock()
+    monkeypatch.setattr(resmed_module, "MyAirDataUpdateCoordinator", mock_coordinator)
+    mock_coordinator.return_value.async_config_entry_first_refresh = AsyncMock()
+    mock_coordinator.return_value.data = coordinator_data(device=device)
+    forward_setups = AsyncMock()
+    monkeypatch.setattr(hass.config_entries, "async_forward_entry_setups", forward_setups)
+
+    with pytest.raises(ConfigEntryNotReady, match="serial number"):
+        await async_setup_entry(hass, config_entry)
+
+    forward_setups.assert_not_awaited()
 
 
 @pytest.mark.asyncio

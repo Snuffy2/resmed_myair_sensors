@@ -1,6 +1,7 @@
 """Config-flow tests that protect setup, MFA, and reauth state transitions."""
 
 import json
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -160,7 +161,10 @@ def test_config_flow_abort_reasons_have_translations(language: str) -> None:
 
 @pytest.mark.asyncio
 async def test_async_step_user_success(
-    flow: MyAirConfigFlow, myair_client: MagicMock, monkeypatch: pytest.MonkeyPatch
+    flow: MyAirConfigFlow,
+    myair_client: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Verify a successful user step creates an entry with the discovered device.
 
@@ -168,6 +172,7 @@ async def test_async_step_user_success(
         flow (MyAirConfigFlow): Config flow receiving the successful credentials.
         myair_client (MagicMock): Client returned after successful device discovery.
         monkeypatch (pytest.MonkeyPatch): Patch manager for the device lookup helper.
+        caplog (pytest.LogCaptureFixture): Captured logs checked for device identifiers.
     """
     user_input: dict[str, str] = {
         CONF_USER_NAME: "user",
@@ -176,7 +181,7 @@ async def test_async_step_user_success(
     }
     device = MyAirDevice.from_api(
         {
-            "serialNumber": "SN123",
+            "serialNumber": "PRIVATE-SERIAL-SENTINEL",
             "fgDeviceManufacturerName": "ResMed",
             "localizedName": "CPAP",
         }
@@ -187,21 +192,34 @@ async def test_async_step_user_success(
         AsyncMock(return_value=(AUTHN_SUCCESS, device, myair_client)),
     )
     flow.hass.config_entries.async_entry_for_domain_unique_id = MagicMock(return_value=None)
-    result = await flow.async_step_user(user_input)
+    with caplog.at_level(logging.DEBUG):
+        result = await flow.async_step_user(user_input)
     assert result["type"] == "create_entry"
     assert "ResMed-CPAP" in result["title"]
     assert result["data"][CONF_USER_NAME] == "user"
+    assert "PRIVATE-SERIAL-SENTINEL" not in caplog.text
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "auth_error",
+    [
+        AuthenticationError("authentication failed"),
+        ClientError("transport failed"),
+        TimeoutError("request timed out"),
+    ],
+)
 async def test_async_step_user_auth_error(
-    flow: MyAirConfigFlow, monkeypatch: pytest.MonkeyPatch
+    flow: MyAirConfigFlow,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_error: Exception,
 ) -> None:
     """Verify authentication failures keep the user step on the form with an error.
 
     Args:
         flow (MyAirConfigFlow): Config flow receiving invalid credentials.
         monkeypatch (pytest.MonkeyPatch): Patch manager for the failing device lookup helper.
+        auth_error (Exception): Authentication or transport error raised by the helper.
     """
     user_input: dict[str, str] = {
         CONF_USER_NAME: "user",
@@ -211,7 +229,7 @@ async def test_async_step_user_auth_error(
     monkeypatch.setattr(
         config_flow,
         "get_device",
-        AsyncMock(side_effect=AuthenticationError("fail")),
+        AsyncMock(side_effect=auth_error),
     )
     result = await flow.async_step_user(user_input)
 
@@ -221,11 +239,20 @@ async def test_async_step_user_auth_error(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_restclient", [True, False])
+@pytest.mark.parametrize(
+    "mfa_error",
+    [
+        AuthenticationError("authentication failed"),
+        ClientError("transport failed"),
+        TimeoutError("request timed out"),
+    ],
+)
 async def test_async_step_verify_mfa_error(
     flow: MyAirConfigFlow,
     myair_client: RESTClient,
     monkeypatch: pytest.MonkeyPatch,
     is_restclient: bool,
+    mfa_error: Exception,
 ) -> None:
     """Verify MFA failures map to the correct form error for each client type.
 
@@ -234,6 +261,7 @@ async def test_async_step_verify_mfa_error(
         myair_client (RESTClient): Real-client-shaped double for the REST branch case.
         monkeypatch (pytest.MonkeyPatch): Patch manager for the failing MFA helper.
         is_restclient (bool): Whether this parameter case supplies a `RESTClient` instance.
+        mfa_error (Exception): Authentication or transport error raised by the helper.
     """
     flow._client = myair_client if is_restclient else MagicMock()
     flow._data = {CONF_USER_NAME: "user"}
@@ -241,7 +269,7 @@ async def test_async_step_verify_mfa_error(
     monkeypatch.setattr(
         config_flow,
         "get_mfa_device",
-        AsyncMock(side_effect=AuthenticationError("fail")),
+        AsyncMock(side_effect=mfa_error),
     )
     result = await flow.async_step_verify_mfa(user_input)
     assert result["type"] == "form"

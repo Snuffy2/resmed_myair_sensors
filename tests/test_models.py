@@ -20,7 +20,7 @@ def test_device_preserves_raw_values_and_device_info_fields() -> None:
         {
             "serialNumber": "123",
             "localizedName": "AirSense",
-            "deviceType": "CPAP",
+            "deviceSeries": "CPAP",
             "fgDeviceManufacturerName": "ResMed",
             "lastSleepDataReportTime": "2024-07-18T12:00:00+00:00",
             "maskCode": "M1",
@@ -32,6 +32,18 @@ def test_device_preserves_raw_values_and_device_info_fields() -> None:
     assert device.model == "CPAP"
     assert device.name == "AirSense"
     assert device.native_value("maskCode") == "M1"
+
+
+@pytest.mark.parametrize("model_field", ["deviceSeries", "deviceType"])
+def test_device_model_supports_current_and_legacy_fields(model_field: str) -> None:
+    """Device models prefer the current field while accepting legacy fixtures.
+
+    Args:
+        model_field (str): Current or legacy API field used for the model value.
+    """
+    device = MyAirDevice.from_api({model_field: "AirSense 11"})
+
+    assert device.model == "AirSense 11"
     assert device.native_value("missing") is None
 
 
@@ -174,7 +186,7 @@ def test_device_fields_with_non_string_optional_values_are_none() -> None:
     device = MyAirDevice.from_api(
         {
             "fgDeviceManufacturerName": 123,
-            "deviceType": True,
+            "deviceSeries": True,
             "localizedName": {"name": "AirSense"},
         }
     )

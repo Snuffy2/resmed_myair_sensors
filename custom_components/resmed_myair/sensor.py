@@ -30,6 +30,48 @@ SERVICE_NAME_SANITIZER: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9_]+")
 _SensorPayload = MyAirDevice | MyAirSleepRecord
 
 
+def _sanitize_service_component(value: str) -> str:
+    """Convert a username or entry ID into a stable service-name component.
+
+    Args:
+        value (str): Raw username or config-entry identifier.
+
+    Returns:
+        str: Lowercase service-name-safe component, or an empty string when no
+            valid characters remain.
+    """
+    return SERVICE_NAME_SANITIZER.sub("_", value.casefold()).strip("_")
+
+
+def _force_poll_service_name(hass: HomeAssistant, config_entry: ConfigEntry) -> str:
+    """Choose a collision-free force-poll service name for a config entry.
+
+    Args:
+        hass (HomeAssistant): Home Assistant instance containing the service registry.
+        config_entry (ConfigEntry): Entry whose username and ID identify the service.
+
+    Returns:
+        str: Username-derived service name, with an entry-ID suffix when this
+            entry is not the deterministic owner of a colliding legacy name.
+    """
+    username_component = _sanitize_service_component(config_entry.data[CONF_USER_NAME])
+    service_name = f"force_poll_{username_component}"
+    colliding_entries = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        if _sanitize_service_component(entry.data.get(CONF_USER_NAME, "")) == username_component
+    ]
+    if len(colliding_entries) <= 1:
+        return service_name
+
+    canonical_entry_id = min(entry.entry_id for entry in colliding_entries)
+    if config_entry.entry_id == canonical_entry_id:
+        return service_name
+
+    entry_component = _sanitize_service_component(config_entry.entry_id) or "entry"
+    return f"{service_name}_{entry_component}"
+
+
 def _coordinator_data(coordinator: MyAirDataUpdateCoordinator) -> MyAirCoordinatorData:
     """Normalize coordinator payloads before sensors read typed fields.
 
@@ -109,9 +151,7 @@ async def async_setup_entry(
 
     async_add_entities(sensors, False)
 
-    sanitized_username: str = SERVICE_NAME_SANITIZER.sub(
-        "_", config_entry.data[CONF_USER_NAME].casefold()
-    ).strip("_")
+    service_name = _force_poll_service_name(hass, config_entry)
 
     async def refresh(_: Any) -> None:
         """Refresh coordinator data when the per-account force-poll service runs.
@@ -121,7 +161,13 @@ async def async_setup_entry(
         """
         await coordinator.async_refresh()
 
-    hass.services.async_register(DOMAIN, f"force_poll_{sanitized_username}", refresh)
+    hass.services.async_register(DOMAIN, service_name, refresh)
+
+    def remove_force_poll_service() -> None:
+        """Remove this entry's exact force-poll service when it unloads."""
+        hass.services.async_remove(DOMAIN, service_name)
+
+    config_entry.async_on_unload(remove_force_poll_service)
 
 
 class MyAirBaseSensor(CoordinatorEntity[MyAirDataUpdateCoordinator], SensorEntity):
@@ -168,7 +214,7 @@ class MyAirBaseSensor(CoordinatorEntity[MyAirDataUpdateCoordinator], SensorEntit
     @property
     def available(self) -> bool:
         """Return whether the latest coordinator payload contained this sensor's data."""
-        return self._available
+        return super().available and self._available
 
     async def async_added_to_hass(self) -> None:
         """Publish an initial state from already-fetched coordinator data."""

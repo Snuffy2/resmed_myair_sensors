@@ -11,6 +11,7 @@ from typing import Any
 from aiohttp import DummyCookieJar
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .client.myair_client import MyAirConfig
@@ -25,6 +26,7 @@ from .const import (
     VERSION,
 )
 from .coordinator import MyAirDataUpdateCoordinator
+from .models import MyAirCoordinatorData
 from .recorder import async_migrate_mask_leak_statistics_metadata
 from .redaction import redact_dict
 
@@ -41,6 +43,10 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     Returns:
         bool: ``True`` after the first coordinator refresh and platform setup
             succeed.
+
+    Raises:
+        ConfigEntryNotReady: When the initial refresh does not provide a device
+            with a serial number.
     """
     _LOGGER.info("Starting ResMed myAir Integration Version: %s", VERSION)
     _LOGGER.debug("[init async_setup_entry] config_entry.data: %s", redact_dict(config_entry.data))
@@ -63,6 +69,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry) -> b
     config_entry.runtime_data = coordinator
 
     await coordinator.async_config_entry_first_refresh()
+
+    if not isinstance(coordinator.data, MyAirCoordinatorData) or not coordinator.data.device:
+        raise ConfigEntryNotReady("myAir did not return a device with a serial number")
+    if not coordinator.data.device.serial_number:
+        raise ConfigEntryNotReady("myAir did not return a device with a serial number")
 
     async_migrate_mask_leak_statistics_metadata(hass)
 

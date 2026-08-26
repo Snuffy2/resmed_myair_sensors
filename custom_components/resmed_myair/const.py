@@ -31,6 +31,7 @@ REGION_EU = "EU"
 KEYS_TO_REDACT: list[str] = [
     "access_token",
     "Authorization",
+    "device_token",
     "email",
     "family_name",
     "firstName",
@@ -46,6 +47,7 @@ KEYS_TO_REDACT: list[str] = [
     "token",
     "username",
     "Username",
+    "verification_code",
 ]
 
 # Our sensor class will prepend the serial number to the key
